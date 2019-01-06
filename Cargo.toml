@@ -5,3 +5,4 @@ authors = ["Evgeny Fomin <fominok@hotmail.com>"]
 edition = "2018"
 
 [dependencies]
+byteorder = "1"
