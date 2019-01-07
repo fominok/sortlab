@@ -1,4 +1,5 @@
 use byteorder::{LittleEndian, ReadBytesExt, WriteBytesExt};
+use rayon::prelude::*;
 use std::default::Default;
 use std::io::Cursor;
 
@@ -121,6 +122,81 @@ fn negatives_test() {
 fn all_in() {
     let v: Vec<i32> = vec![-1337, 345, -1338, 0, -420, 0, -1420, 420, 4, 3, -9999, 432];
     let v1 = sort(&v);
+    assert_eq!(
+        v1,
+        vec![-9999, -1420, -1338, -1337, -420, 0, 0, 3, 4, 345, 420, 432]
+    );
+}
+
+pub fn parallel_sort<T>(coll: &Vec<T>) -> Vec<T>
+where
+    T: HasSortData + Copy + Default + Send + Sync,
+{
+    let mut v = coll.clone();
+    let bc = GetSortData::bytes_count::<T>();
+    let is_signed = GetSortData::is_signed::<T>();
+    for i in 0..bc {
+        let mut v2 = vec![Default::default(); v.len()];
+        let v_byte = v
+            .par_iter()
+            .map(|&x| {
+                let byte = GetSortData::bytes(x)[i as usize];
+                if is_signed && (i == bc - 1) {
+                    let i8_byte = Cursor::new(vec![byte]).read_i8().unwrap();
+                    (i8_byte as i16 + 128) as u8
+                } else {
+                    byte
+                }
+            })
+            .collect::<Vec<u8>>();
+
+        let mut counter: [usize; 256] = v_byte
+            .par_iter()
+            .fold(
+                || [0; 256],
+                |mut acc, &b| {
+                    acc[b as usize] += 1;
+                    acc
+                },
+            )
+            .reduce(
+                || [0; 256],
+                |mut a, b| {
+                    b.iter().enumerate().for_each(|(j, &b)| a[j] += b);
+                    a
+                },
+            );
+
+        for j in 1..256 {
+            counter[j] += counter[j - 1];
+        }
+        v_byte.iter().enumerate().rev().for_each(|(j, &b)| {
+            counter[b as usize] -= 1;
+            v2[counter[b as usize]] = v[j]
+        });
+        v = v2;
+    }
+    v
+}
+
+#[test]
+fn parallel_positives_test() {
+    let v: Vec<u32> = vec![1723, 456, 76, 85, 431, 31, 904];
+    let v1 = parallel_sort(&v);
+    assert_eq!(v1, vec![31, 76, 85, 431, 456, 904, 1723]);
+}
+
+#[test]
+fn parallel_negatives_test() {
+    let v: Vec<i32> = vec![-1337, -1338, -420, -1420];
+    let v1 = parallel_sort(&v);
+    assert_eq!(v1, vec![-1420, -1338, -1337, -420]);
+}
+
+#[test]
+fn parallel_all_in() {
+    let v: Vec<i32> = vec![-1337, 345, -1338, 0, -420, 0, -1420, 420, 4, 3, -9999, 432];
+    let v1 = parallel_sort(&v);
     assert_eq!(
         v1,
         vec![-9999, -1420, -1338, -1337, -420, 0, 0, 3, 4, 345, 420, 432]
